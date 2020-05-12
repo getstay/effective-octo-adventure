@@ -652,7 +652,7 @@ T.overKeys (f) ({ foo: 'jack', bar: 'ron', baz: 'sally' })
 ```
 
 ```js
-T.overPairs (T.reverse) ({ foo: 1, bar: 2, baz: 3 })
+T.overPairs (T.map(T.reverse)) ({ foo: 1, bar: 2, baz: 3 })
 // -> { 1: 'foo', 2: 'bar', 3, 'baz' }
 ```
 
