@@ -18,7 +18,7 @@ T.compose (T.Array.from, T.map (v => v + 1)) (Array.of(1, 2, 3 ))
 
 T.compose (T.Array.from, T.map (v => v + 1)) (Observable.of(1, 2, 3)
 // Promise [ 2, 3, 4 ]
-// NOTE: the above result is hypotethetical, not based on any specific implementation of "Observable".
+// NOTE: the above result is hypothetical, not based on any specific implementation of "Observable".
 ```
 
 You might argue that such an expectation is more specific than "a list across time", and that, if the result is the same for all operations, you could call it, most literally, `ReactiveArray`, which is fine, too, but whatever your preferences, you are able to use these generic compositions to verify qualities about them.
