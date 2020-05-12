@@ -40,7 +40,7 @@ f ([ 1, 2, 3 ])
 // -> [  2, 4 ]
 ```
 
-However, this operation only created the one array that it returned; each value from the input array having been mapped, then filtered, then put into this one array, rather than creating a mapped array, and then a filtered array and returning the second. Transducers are naturally efficient in this regard. No intermediate types will be created during the execution of a composition of transducers.
+However, this operation only created the one array that it returned; each value from the input array having been mapped, then filtered, then put into this one array, rather than creating a mapped array, and then creating a filtered array. Transducers are naturally efficient in this regard. No intermediate types will be created during the execution of a composition of transducers.
 
 Here, `f` is composed with `T.Object.from`, which is also a transducer, producing a transducer which will take each value from the input array, through the map and filter transformations, and into an object. The index of each value from the array is passed along as its key, and the object receives the transformed values with those keys.
 ```js
