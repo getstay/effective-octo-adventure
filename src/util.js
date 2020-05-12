@@ -30,3 +30,13 @@ export const after = (value, f) => isPromise(value) ? value.then(f) : f(value)
 
 // TODO: this should consider thenables as Promises. Use is-promise.
 export const isPromise = value => Promise.resolve(value) === value
+
+export const Deferred = () => {
+	let resolve
+	let reject
+	const promise = new Promise((a, b) => {
+		resolve = a
+		reject = b
+	})
+	return Object.assign(promise, { resolve, reject })
+}

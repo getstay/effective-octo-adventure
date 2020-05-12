@@ -1,6 +1,6 @@
 import { Transducer } from '../core/Transducer.js'
 import { tProtocol } from '../core/tProtocol.js'
 
-export const mapper = f => next => (accumulator, value, meta) => next(accumulator, f(value), meta)
+export const map_step = f => next => (accumulator, value, meta) => next(accumulator, f(value), meta)
 
-export const map = f => Transducer(next => mapper (f) (next[tProtocol.step]))
+export const map = f => Transducer(next => map_step (f) (next[tProtocol.step]))

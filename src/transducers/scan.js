@@ -1,10 +1,10 @@
-import { mapper } from './map.js'
+import { map_step } from './map.js'
 import { Transducer } from '../core/Transducer.js'
 import { tProtocol } from '../core/tProtocol.js'
 
-export const scanner = reducer => initialValue => next => {
+export const scan_step = reducer => initialValue => next => {
 	let accumulator = initialValue
-	return mapper (value => accumulator = reducer(accumulator, value)) (next)
+	return map_step (value => accumulator = reducer(accumulator, value)) (next)
 }
 
-export const scan = reducer => initialValue => Transducer(next => scanner (reducer) (initialValue) (next[tProtocol.step]))
+export const scan = reducer => initialValue => Transducer(next => scan_step (reducer) (initialValue) (next[tProtocol.step]))
