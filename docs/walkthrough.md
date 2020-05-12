@@ -726,8 +726,44 @@ The helper makes the transducer check whether `next` is a transformer, and if so
 
 ## Implementation convenience
 
-// TODO: partial transformer definitions
-// TODO: reusing step functions
-// TODO: composing transducers into new ones
+Writing transducers can include some boilerplate that is not specific to the algorithm being implemented. A helper can be used to fill in the missing stuff. `map` can be as verbose as this:
+```js
+const map = f => next => {
+	[tProtocol.init]: next[tProtocol.init],
+	[tProtocol.step]: (accumulator, value) => next[tProtocol.step](accumulator, f(value)),
+	[tProtocol.result]: next[tProtocol.result]
+}
+```
+
+Or as concise as:
+```js
+const map = f => Transducer(next => (accumulator, value) => next[tProtocol.step](accumulator, f(value)))
+```
+
+This helper lets you express the transformer as just a step function, or as an object that doesn't need to define all of the transformer properties.
+See [`Transducer`](../src/core/Transducer.js).
+See [`Transformer`](../src/core/Trasformer.js).
+
+Some transducers can be derived from others. `map` is a tiny layer over the lowest level `step` function, and `scan` is a tiny layer over `map`. It can be nice to ignore the full transducer requirements and express small pieces of transducers as their own thing, and reuse those pieces, rather than having to deal with a transducer/transformer as the smallest composable piece.
+```js
+export const map_step = f => next => (accumulator, value, meta) => next(accumulator, f(value), meta)
+
+export const map = f => Transducer(next => map_step (f) (next[tProtocol.step]))
+
+// reusing `map_step`
+export const scan_step = reducer => initialValue => next => {
+	let accumulator = initialValue
+	return map_step (value => accumulator = reducer(accumulator, value)) (next)
+}
+
+export const scan = reducer => initialValue => Transducer(next => scan_step (reducer) (initialValue) (next[tProtocol.step]))
+```
+
+Finally, there are higher level algorithms that can be built just from stringing others together. The most obvious example of all obvious examples ever:
+```js
+const flatMap = compose (flatten, map)
+```
+
+Just note that, at least for the implementation in this library, the special `compose` should be used because it will make the composition identifiable as a transducer, and keep the smart auto-transduce stuff in tact.
 
 ## TODO: asynchronous reduce and asynchronous transducers
