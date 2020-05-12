@@ -282,7 +282,82 @@ For example, it is arbitrary to make a `build_string` or `build_set` reducer and
 
 The point is - have a `reduce` for all the things, have generic transformations that make a reducer, and have a builder for all the things, and then you can iterate anything, transforming the values using the same algorithms for anything, and build the values into anything.
 
+See [`builders`](../src/core/builders.js).
+See [`getBuilder`](../src/core/getBuilder.js).
+See [`reduce`](../src/core/reduce.js).
+
 You are now familiar with the fundamental transducer concept and basic implementation! We must still expand on these ideas to support the implementation of more algorithms, and to build up to a convenient, high-level, expressive API.
+
+## Iterating keyed collections
+
+A detail to consider about iteration is how to approach keyed collections. Keyed collections are typically iterated as key/value pairs, `[ key, value ]`, but I currently believe this approach causes semantic problems and foregoes some powerful opportunities. Just on principle, having as the `value`, a `[ key, value ]`, suggests something is wrong. It warrants changing the name of each item from the collection to `entry`, but this is false for non-keyed collections, unless you make it so that all collections are iterated as key/value pairs, as in the following example:
+```js
+map (([ key, value ]) => [ key, value + 1 ]) ([ 1, 2, 3 ])
+// -> [ 2, 3, 4 ]
+
+map (([ key, value ]) => [ key, value + 1 ]) ({ foo: 1, bar: 2, baz: 3 })
+// -> { foo: 2, bar: 3, baz: 4 }
+```
+
+It's semantically consistent, but awful to use. We know that for non-keyed collections, we just want the value, not the value and index, passed as the value. I suggest applying the same thinking to keyed collections; just pass the value as the value.
+```js
+map (value => value + 1) ([ 1, 2, 3 ])
+// -> [ 2, 3, 4 ]
+
+map (value => value + 1) ({ foo: 1, bar: 2, baz: 3 })
+// -> { foo: 2, bar: 3, baz: 4 }
+```
+
+For consistency, I suggest that all collections are iterated by passing out a value and a key, where the key can be an arbitrary incrementing index, should the collection not be keyed or indexed naturally. So, at the lowest level, there is some representation of key/value pairs being iterated and passed through the transducer algorithms.
+
+See [`iterateNative`](../src/core/iterateNative.js).
+
+```js
+// as pairs
+export const map = f => next => (accumulator, [ key, value ]) => next(accumulator, [ key, f(value) ])
+
+// key as an additional parameter
+export const map = f => next => (accumulator, value, key) => next(accumulator, f(value), key)
+```
+
+When a keyed collection hands out its values as key/value pairs, the knowledge that the left value is a key is lost, meaning that generic operations cannot handle the pair any differently than any other value. By preserving this information with a consistent distinction between key and value, we gain more compositional opportunity.
+```js
+reduce
+	(filter
+		(v => v % 2 === 0)
+		(map
+			(v => v + 1)
+			(build_object))
+	)
+	({})
+	([ 1, 2, 3 ])
+// -> { 0: 2, 2: 4 },
+```
+
+We didn't need to say anything about keys to go from an array to an object - the iteration function passed along the index as `key` in case anything could use it, and so the object builder took the array indexes as its keys, **and it naturally preserved the correct index from the array.**
+
+This key value distinction also allows us to do something very expressive that is usually impossible: switch the values passed within an operation from values to keys, or as key/value pairs.
+
+```js
+const f = T.compose (T.reject (v => v.startsWith('r')), T.map (T.reverse))
+
+// run the operation normally - on the values of the input
+f ({ foo: 'jack', bar: 'ron', baz: 'sally' })
+// -> { foo: 'kcaj', baz: 'yllas' }
+
+// run the operation on the keys
+T.overKeys (f) ({ foo: 'jack', bar: 'ron', baz: 'sally' })
+// -> { oof: 'jack', zab: 'sally' }
+```
+
+```js
+T.overPairs (T.map(T.reverse)) ({ foo: 1, bar: 2, baz: 3 })
+// -> { 1: 'foo', 2: 'bar', 3, 'baz' }
+```
+
+This is accomplished by putting a transducer on each side of the given transducer. The transducer before adjusts what is sent to next transducer, and the transducer after adjusts it back. It is very similar to a lens, and maybe it is correct to call it some kind of promapping. Promap is both contramap and map - transforming the input and the output.
+
+See [`over`](../src/transducers/over.js).
 
 ## Short Circuiting / Early Termination
 
@@ -625,40 +700,17 @@ I prefer if stuff just works like it looks like it should work and I don't have 
 
 It would be sweet if `compose` could combine transducers that are next to each other, and _then_ auto-transduce, instead of each transducer auto-transducing as it is passed a collection. Except... then what about the order? We can't have regular functions composing one direction and transducer transforming the other direction, all in the same arguments to `compose`. So, it's pretty clear we're going to have to normalize the order by reversing the order of transducers when they're used this way. We would no longer think about transducer and their order when composing them, but justconsider them as right-to-left transformations as any other function. We need a `compose` function that will reverse the order of transducers and combine them, and works smoothly with other functions. I implemented this as `pipe` first, because one place in the code was much easier to reason about for me in comparison to the equivalent code for compose.
 
-// TODO: link to pipe.js
+See [`pipe`](../src/core/pipe.js).
 
 With this special `compose`, we can finally use the same API we would use for non-transduce code, but keep all of the benefits of the generic implementation.
 
 ```js
-T.compose(T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ]),
+T.compose(T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ])
 // -> [ 2, 4 ]
 
-T.compose(T.Object.from, T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ]),
+T.compose(T.Object.from, T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ])
 // -> { 0: 2, 2: 4 },
 ```
-
-Did you catch that? We didn't need to say anything about keys to go from an array to an object - the iteration function passed along the index as `key` in case anything could use it, and so the object builder took the array indexes as its keys, **and it naturally preserved the correct index from the array.** This is a nice bonus resulting from efficient transducer composition and the decision to iterate all collections as `value, { key }`, instead of some collections as value and some as `[ key, value ]` pairs. This allows us to do something very expressive that is usually impossible: switch the value being operated on within an operation from values to keys, or as key/value pairs.
-
-```js
-const f = T.compose (T.reject (v => v.startsWith('r')), T.map (T.reverse))
-
-// run the operation normally - on the values of the input
-f ({ foo: 'jack', bar: 'ron', baz: 'sally' })
-// -> { foo: 'kcaj', baz: 'yllas' }
-
-// run the operation on the keys
-T.overKeys (f) ({ foo: 'jack', bar: 'ron', baz: 'sally' })
-// -> { oof: 'jack', zab: 'sally' }
-```
-
-```js
-T.overPairs (T.map(T.reverse)) ({ foo: 1, bar: 2, baz: 3 })
-// -> { 1: 'foo', 2: 'bar', 3, 'baz' }
-```
-
-This is accomplished by putting a transducer on each side of the given transducer. The transducer before adjusts what is sent to next transducer, and the transducer after adjusts it back. It is very similar to a lens, and maybe it is correct to call it some kind of promapping. Promap is both contramap and map - transforming the input and the output.
-
-TODO: link to over.js
 
 _Note: we have now ventured far away from other transducer implementations, and will go a little further yet._
 
