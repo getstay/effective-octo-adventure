@@ -694,7 +694,7 @@ Did we just fly directly into the sun with our wings in tact? Unfortunately, no.
 compose(filter (v => v % 2 === 0), map (v => v + 1)) ([ 1, 2, 3 ])
 ```
 
-Do you expect the result to be `[ 2, 4 ]`, or `[ 3 ]`? Recall that transducers transform 'backwards' of how they compose, so, a transducer, this operation should filter and then map. But as regular functions, it would map the array, producing an array, then pass that array to filter, producing another array. So... they work very differently as regular functions. What if we could just get all of the good stuff and none of the bad stuff?
+Do you expect the result to be `[ 2, 4 ]`, or `[ 3 ]`? Recall that transducers transform 'backwards' of how they compose, so, as a transducer, this operation should filter and then map. But as regular functions, it would map the array, producing an array, then pass that array to filter, producing another array. So... they work very differently as regular functions. What if we could just get all of the good stuff and none of the bad stuff?
 
 I prefer if stuff just works like it looks like it should work and I don't have to think about it, and also it's as efficient as possible. Since we have these functions that sound like regular function and can work like regular functions, at some point, we'll want to throw a regular function into `compose` along side these auto-transducing transducers. That would work as we have it so far; I just wanted to point out it's something you can do and we shouldn't break it somehow.
 
@@ -766,4 +766,84 @@ const flatMap = compose (flatten, map)
 
 Just note that, at least for the implementation in this library, the special `compose` should be used because it will make the composition identifiable as a transducer, and keep the smart auto-transduce stuff in tact.
 
-## TODO: asynchronous reduce and asynchronous transducers
+## asynchronous reduction, transducible contexts, transducible processes
+
+Some collections have semantics that include time, such as async iterables, emitters, observables, and streams. `reduce` on such collections must return a promise of the eventual result. Note that some collections don't ever complete, so the promise would never resolve. I believe it is preferable if a collection has some kind of completion so that it is possible to `reduce` and get a result, at least for the sake of demonstration and testing. Otherwise, `reduce` is still useful for iterating and building values into something, but I realize that, at the moment, that sounds absurd, because how can you use the result if it's stuck in a promise that never resolves?
+
+Most transducer implementations expect more work to be done in the implementation of a collection and more effort in the calling code than what I have discussed so far.
+See [Creating Transducible Processes](https://clojure.org/reference/transducers#_creating_transducible_processes). Often, a library/collection will state that it supports transducers, and this means that the collection has its own special `transduce` function or method that takes a transducer and operates on the collection and returns a collection of that type, transformed using the transducer. Unlike what you have seen so far in this walkthrough, this usually means that you can only transduce that type into that type - all the awesome, free, from-anything-to-anything semantic translating goodness is lost, along with auto-transducing. Transducer libraries usually assume throughout that collections will either be primitives or semantically similar, especially that they are synchronous. I have never seen any other transducer implementation of `cat`, aka `flatten`, that supported concurrency, meaning they are assuming that the nested collections will be iterated to completion, one-at-a-time, in series. An implementation that supports concurrency is more generic because it can naturally handle the simpler case of a synchronous collection.
+
+I am convinced it is possible to build a high level API over transducers that make calling code ignorant of transducing concerns, and to require very little of a collection's implementation to support this. I want one very generic, high level transducible context in which everything just works.
+
+As for generic `reduce`, there are only two possible cases. `reduce` may iterate through a collection synchronously, returning the result, or it may iterate through the collection asynchronously (i.e. a value later, and another even later, etc), eventually producing the result, if it ever reaches the end. To handle this generically, you just have to handle the case that you get a promise and the case that you don't. Anything that calls `reduce` should keep this in mind... the main thing that does this is `transduce`. It just needs to call the result function after the `reduce` promise resolves, in the case that `reduce` returns a promise.
+
+This is how it looked before:
+```js
+const transduce = accumulator => builder => transducer => source => {
+	const process = transducer(builder)
+	const result = reduce (process.step) (accumulator) (source)
+	return process.result(result)
+}
+```
+
+And now supporting `reduce` that may return a promise:
+```js
+const transduce = accumulator => builder => transducer => source => {
+	const process = transducer(builder)
+	const result = reduce (process[tProtocol.step]) (accumulator) (source)
+	const resultF = result => process[tProtocol.result](result, accumulator)
+	return isPromise(result) ? result.then(resultF) : resultF(result)
+}
+```
+
+This makes it so that we can transduce an Emitter or some other asynchronous collection into a synchronous collection like this:
+
+```js
+// this Emitter.of makes an emitter that emits the given values on the next tick
+// after the values are emitted, the emitter 'completes', so its `reduce` promise resolves
+await T.transduce ([]) (T.Array_builder) (T.map (v => v + 1)) (Emitter.of(1, 2, 3))
+// -> [ 2, 3, 4 ]
+
+// higher level API:
+await T.compose (Array.from, T.map (v => v + 1)) (Emitter.of(1, 2, 3))
+// -> [ 2, 3, 4 ]
+```
+
+You could also transduce an asynchronous collection into an asynchronous collection, but there's a problem. An asynchronous collection is like many promises / many promise resolutions, and turning that into a single promise is bad news. Consider this:
+```js
+const emitterOfNumber = Emitter.of(1, 2, 3)
+const promiseOfEmitterOfDoubledNumber = T.map (v => v + 1) (emitterOfNumber)
+// uhhh. promise of an emitter?
+
+promiseOfEmitterOfDoubledNumber.then(emitter => {
+	emitter.subscribe(console.log) // nothing, ever
+})
+```
+
+When the source emitter emits, the value from it is going to be mapped and sent to the builder, building that value into the new emitter, and, of course, this keeps hapenning for all the values emitted by the source emitter, until it completes. When the source emitter is done, _then_ the promise from `reduce` resolves, leading to the promise of `transduce` resolving, and so we finally get the result - the emitter that was built. But... that emitter already got all of its values and emitted them, while we just had a promise. We missed everything! Asynchronous collections are able to convey each value built into them. They are like a promise that can resolve more than once. Therefore, returning a promise of their complete reduction defeats their purpose. Collections like this *are* the promise of each step of their reduction, so to speak. This adds a third and final branch of behavior for `transduce`. If the accumulator being built up can represent async steps, just return the accumulator immediately, otherwise, return the result as usual, whether it's a promise or synchronous result. In any of the cases, the result function of the process will still be called after the reduction completes. See [`transduce`](../src/core/transduce.js).
+```js
+const emitterOfNumber = Emitter.of(1, 2, 3)
+const emitterOfDoubledNumber = T.map (v => v + 1) (emitterOfNumber)
+emitterOfDoubledNumber.subscribe(console.log) // logs 2, logs 4, logs 6
+```
+
+### **Caveats
+I am very happy with the results of these decisions so far, but there are some trade-offs.
+
+If `transduce` might return the accumulator that was handed to it, then step functions / builders and result functions should be extremely cautious about switching out the original accumulator for a different one, as this will have limitations. Imagine the case of transducing into an emitter, so that emitter is returned synchronously, but when the first value comes from the source, the `step` function decides the process is done and returns `reduced(0)`, instead of `reduced(thatAccumulatorEmitter)`. It is intending to send a `0` out into the world as the result of this process, but we've already sent out an emitter. I can't think of any real cases where this is a problem, though I have [seen such a transducer](https://github.com/cognitect-labs/transducers-js/blob/master/src/com/cognitect/transducers.js):
+```js
+transducers.first = transducers.wrap(function(result, input) {
+	return transducers.reduced(input);
+});
+```
+
+There are plenty of other ways to express this behavior without having a transducer that replaces the accumulator.
+
+```js
+const first = T.compose(v => v[0], T.Array.from, T.slice (0) (1))
+```
+
+
+## TODO: asynchronous transducers
+
+## TODO: generic iteration, generic reduce, custom reduce
