@@ -5,7 +5,7 @@ import { pipe } from '../core/pipe.js'
 
 const wrapped = Symbol()
 const unwrap = value => after(value, value => value.wrapped === wrapped ? value.accumulator : value)
-const wrap = (accumulator, value, meta) => after(accumulator, accumulator => ({ wrapped, accumulator: unwrap(accumulator), focus: [ meta.key, value ] }))
+const wrap = (accumulator, value, meta) => after(accumulator, accumulator => ({ wrapped, accumulator: unwrap(accumulator), focus: [ value, meta.key ] }))
 
 export const over = getter => setter => transducer => pipe(
 	Transducer(next => (accumulator, value, meta) => {

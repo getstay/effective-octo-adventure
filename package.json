@@ -5,11 +5,20 @@
   "main": "./src/index.js",
   "type": "module",
   "sideEffects": false,
+  "exports": {
+    ".": {
+      "require": "./build/index.cjs",
+      "default": "./src/index.js"
+    }
+  },
   "scripts": {
     "glob-tests": "glob-module-file --format=es --importStar --pathPrefix='' --pattern \"${npm_config_file:-./src/**/*.{spec,test\\}.js}\"",
     "make-test-file": "npm run --silent glob-tests | rollup -c rollup.test.config.js",
-    "test": "npm run --silent make-test-file > ./build/test.js && node --enable-source-maps ./build/test.js",
-    "dev": "onchange 'src/**/*' -i -- npm run test"
+    "test:src": "npm run --silent make-test-file > ./build/test.js && node --enable-source-maps ./build/test.js",
+    "test:docs": "glob-run gfmjs '*.md' && glob-run gfmjs './docs/**/*.md'",
+    "test": "npm run test:src && npm run test:docs",
+    "dev": "onchange './src/**/*' '*.md' './docs/**/*.md' -i -- npm run test",
+    "build": "rollup -c"
   },
   "keywords": [],
   "repository": {
@@ -22,7 +31,9 @@
     "@rollup/plugin-commonjs": "^11.0.2",
     "@rollup/plugin-node-resolve": "^7.1.1",
     "delay": "^4.3.0",
+    "gfmjs": "github:getstay/gfmjs",
     "glob-module-file": "^3.0.1",
+    "glob-run": "^0.1.7",
     "onchange": "^6.1.0",
     "rollup": "^2.2.0",
     "zora": "^3.1.8"

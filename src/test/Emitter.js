@@ -145,3 +145,5 @@ export const of = (...values) => {
 	values.forEach((value, index) => emitter.emit(value, { final: index === finalIndex }))
 	return emitter
 }
+
+export const from = Transducer(() => builder)

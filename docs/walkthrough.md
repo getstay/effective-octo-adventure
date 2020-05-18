@@ -1,5 +1,20 @@
 # Transducers
 
+## setup
+<!--js
+import * as T from '../src/index.js'
+-->
+```node
+import * as T from 'this-lib-needs-a-name'
+```
+```js
+import { compose } from '../src/util.js'
+
+// This emitter implementation is for testing purposes and will suffice as Observable in this document
+import * as Emitter from '../src/test/Emitter.js'
+const Observable = Emitter
+```
+
 ## Source collection and destination collection unaware algorithms
 
 // TODO: this whole section is currently just rambling.
@@ -13,12 +28,12 @@ Generic transformations that do not have the responsibility of iterating a sourc
 Having the semantics of a collection independent of the algorithms that transform its values offers opportunities to verify the collection's semantics and to learn about how semantics of the algorithms and semantics across collections translate to and from any given collection's semantics. For example, an FRP / Reactive type i.e. Observable/Stream/Event is often described as a "list across time". If that is a true description of the type, then you might expect the same composition on an Array (list) or an Observable to produce the same result, but through the semantics of each collection. To avoid having to interpret results through those semantics, you could use a generic function that turns any collection into an array, or a promise of an array for asynchonously iterated types.
 
 ```js
-T.compose (T.Array.from, T.map (v => v + 1)) (Array.of(1, 2, 3 ))
-// [ 2, 3, 4 ]
+T.compose (T.Array.from, T.map (v => v + 1)) (Array.of(1, 2, 3 )) // => [ 2, 3, 4 ]
 
-T.compose (T.Array.from, T.map (v => v + 1)) (Observable.of(1, 2, 3)
-// Promise [ 2, 3, 4 ]
-// NOTE: the above result is hypothetical, not based on any specific implementation of "Observable".
+;(async () => {
+	await T.compose (T.Array.from, T.map (v => v + 1)) (Observable.of(1, 2, 3)) // => [ 2, 3, 4 ]
+	// NOTE: the above result is hypothetical, not based on any specific implementation of "Observable".
+})()
 ```
 
 You might argue that such an expectation is more specific than "a list across time", and that, if the result is the same for all operations, you could call it, most literally, `ReactiveArray`, which is fine, too, but whatever your preferences, you are able to use these generic compositions to verify qualities about them.
@@ -36,25 +51,25 @@ const f = T.compose (T.filter(v => v % 2 === 0), T.map (v => v + 1))
 
 When passed an array, the result is as usual.
 ```js
-f ([ 1, 2, 3 ])
-// -> [  2, 4 ]
+f ([ 1, 2, 3 ]) // => [  2, 4 ]
 ```
 
 However, this operation only created the one array that it returned; each value from the input array having been mapped, then filtered, then put into this one array, rather than creating a mapped array, and then creating a filtered array. Transducers are naturally efficient in this regard. No intermediate types will be created during the execution of a composition of transducers.
 
 Here, `f` is composed with `T.Object.from`, which is also a transducer, producing a transducer which will take each value from the input array, through the map and filter transformations, and into an object. The index of each value from the array is passed along as its key, and the object receives the transformed values with those keys.
 ```js
-T.compose (T.Object.from, f) ([ 1, 2, 3 ])
-// -> { 0: 2, 2: 4 }
+T.compose (T.Object.from, f) ([ 1, 2, 3 ]) // => { 0: 2, 2: 4 }
 ```
 
 In this implementation, keyed collections such as Object and Map are not iterated as `[ key, value ]` pairs; rather all collections are iterated as `value, { key }`, as this provides consistent meaning of transformations across types, and a convenient default behavior. Transformation on `[ key, value ]` pairs, or just `key`, is opt-in using special functions for the purpose.
 ```js
-T.overPairs (T.map (([ k, v ]) => [ v, Number(k) + v ])) ({ 0: 1, 1: 2, 2: 3 })
-// -> { 1: 1, 2: 3, 3: 5 },
+T.overPairs
+	(T.map (([ k, v ]) => [ v, Number(k) + v ]))
+	({ 0: 1, 1: 2, 2: 3 }) // => { 1: 1, 2: 3, 3: 5 }
 
-T.overKeys (T.compose (T.reject (key => key.startsWith('r')), T.map(T.reverse))) ({ foo: 1, bar: 2, baz: 3 })
-// -> { oof: 1, zab: 3 },
+T.overKeys
+	(T.compose (T.reject (key => key.startsWith('r')), T.map(T.reverse)))
+	({ foo: 1, bar: 2, baz: 3 }) // => { oof: 1, zab: 3 }
 ```
 
 In this example, `f` is composed with `T.Set.from`, so a `Set` is expected as a result.
@@ -64,47 +79,59 @@ Each value is transformed as it is produced by the input async iterator, and bui
 When the iterator is done and all values have been built into the `Set`, the promise resolves.
 ```js
 async function * oneTwoThree () { yield 1; yield 2; yield 3; }
-await T.compose (T.Set.from, f) (oneTwoThree())
-// -> Set (2, 4)
+;(async () => {
+	await T.compose (T.Set.from, f) (oneTwoThree()) // => new Set([ 2, 4 ])
+})()
 ```
 
 The examples have so far demonstrated the case of a synchronously iterable source collection having its values carried through transformations into an accumulator collection, and the case of an asynchronously iterable source collection doing the same, but returning a promise of the accumulator. There is another possibility, which is that the accumulator collection has semantics that provide meaning for its values as they are received or in some real-time way prior to having all of the incoming values. That means that in some sense, the collection is also asynchronously iterable, or reactive. For example, if the collection is an emitter, it can emit each value and subscribers can receive them. In this case, the accumulator collection is immediately returned.
 ```js
-async function * oneTwoThree () { yield 1; yield 2; yield 3; }
-const emitter = T.compose (Emitter.from, f) (oneTwoThree())
-emitter.subscribe(console.log)
-// -> logs: 1
-// -> logs: 2
-// -> logs: 3
+;(async () => {
+	async function * oneTwoThree () { yield 1; yield 2; yield 3; }
+	const emitter = T.compose (Emitter.from, f) (oneTwoThree())
+	const emittedValues = []
+	emitter.subscribe(value => {
+		emittedValues.push(value)
+	})
+	await new Promise(resolve => setTimeout(resolve, 100))
+	emittedValues // => [ 2, 4 ]
+})()
 ```
 
 Depending upon the semantics of the collection, some extreme stuff is possible.
 This is an emitter emitting emitters that emit other values. You could subscribe to any of these individually and would recieve their emitted values. Each member value of the collection is a collection, and each value is iterated, sending its values along to the same destination as all the others, producing a flattened/unnested result.
 ```js
-const emitter = T.flatten (Emitter.of(Emitter.of(1), Emitter.of(2, 3, 4), Emitter.of(5, 6)))
-emitter.subscribe(console.log)
-// -> logs: 1
-// -> logs: 2
-// -> logs: 3
-// -> logs: 4
-// -> logs: 5
-// -> logs: 6
+;(async () => {
+	const emitter = T.flatten (Emitter.of(Emitter.of(1), Emitter.of(2, 3, 4), Emitter.of(5, 6)))
+	const emittedValues = []
+	emitter.subscribe(value => {
+		emittedValues.push(value)
+	})
+	await new Promise(resolve => setTimeout(resolve, 100))
+	emittedValues // => [ 1, 2, 3, 4, 5, 6 ]
+})();
 ```
 
 This is analogous to `Array.of(Array.of(1), Array.of(2, 3, 4), Array.of(5, 6)).flat()`, or `[ [ 1 ], [ 2, 3, 4 ], [ 5, 6 ] ].flat()`.
 If there's any doubt - make the result an array instead, and see if the results are equivalent.
 ```js
-;[ [ 1 ], [ 2, 3, 4 ], [ 5, 6 ] ].flat()`
-// -> [ 1, 2, 3, 4, 5, 6 ]
+;[ [ 1 ], [ 2, 3, 4 ], [ 5, 6 ] ].flat() // => [ 1, 2, 3, 4, 5, 6 ]
 
-await T.compose (T.Array.from, T.flatten) (Emitter.of(Emitter.of(1), Emitter.of(2, 3, 4), Emitter.of(5, 6)))
-// -> [ 1, 2, 3, 4, 5, 6 ]
+/*;(await T.compose
+	(T.Array.from, T.flatten)
+	(Emitter.of(Emitter.of(1), Emitter.of(2, 3, 4), Emitter.of(5, 6)))
+) // => [ 1, 2, 3, 4, 5, 6 ]
+*/
 ```
 
 Finally, let's crank it up to 11 and flatten a collection of other collections it knows nothing about, into some other collection it knows nothing about.
 ```js
-await T.compose (T.Array.from, T.flatten) (Emitter.of(Emitter.of(1), Array.of(2, 3, 4), new Set([ 5, 6 ])))
-// -> [ 1, 2, 3, 4, 5, 6 ]
+;(async () => {
+	await (T.compose
+		(T.Array.from, T.flatten)
+		(Emitter.of(Emitter.of(1), Array.of(2, 3, 4), new Set([ 5, 6 ])))
+	) // => [ 1, 2, 3, 4, 5, 6 ]
+})()
 ```
 
 ## Transducer definition
@@ -124,7 +151,7 @@ Consider how you might implement Array `.map`.
 
 A low level approach:
 ```js
-const map = f => array => {
+let map = f => array => {
 	const accumulator = []
 	for (let i = 0; i < array.length; i++) {
 		accumulator[i] = f(array[i])
@@ -135,7 +162,7 @@ const map = f => array => {
 
 Noting the multiple concerns:
 ```js
-const map = f => array => {
+map = f => array => {
 	const accumulator = [] // knowledge of the desitnation
 	for (let i = 0; i < array.length; i++) { // iterating the source
 		const value = array[i]
@@ -148,7 +175,7 @@ const map = f => array => {
 
 Consider also a higher level implementation using `reduce`:
 ```js
-const map = f => array => array.reduce( // iterating the source
+map = f => array => array.reduce( // iterating the source
 	(accumulator, value) => {
 		const transformedValue = f(value) // the actual map algorithm
 		accumulator.push(transformedValue) // building into the destination
@@ -167,7 +194,7 @@ Further, it is unable to compose its underlying algorithm with any other, becaus
 
 So, let's take a naive jab at solving those problems.
 ```js
-const map = f => value => f(value)
+map = f => value => f(value)
 map (v => v + 1) (0) // 1
 ```
 
@@ -175,7 +202,7 @@ Too far? Too far. Something appears to be missing, because we may as well have d
 
 However we solve this, it mustn't work only for `map`. Let's look at `filter` as well.
 ```js
-const filter = predicate => array => array.reduce(
+let filter = predicate => array => array.reduce(
 	(accumulator, value) => {
 		if (predicate(value)) { // <--- I see you, filter algorithm.
 			accumulator.push(value)
@@ -190,7 +217,7 @@ Most of it is the same piling up of concerns, and then one small part that is ac
 
 To ditch the concerns and make something useless once again:
 ```js
-const filter = predicate => value => predicate(value) ? value : new Error('what do we do!?')
+filter = predicate => value => predicate(value) ? value : new Error('what do we do!?')
 ```
 
 To find the interface we're looking for, let's take the overly concerned code block and break pieces out and stick pieces in, lego style.
@@ -213,7 +240,7 @@ This just copies the input array into the accumulator array.
 From this, all we must do is remove anything that isn't `reduce`. We'll call that stuff `accumulator` and `build`.
 
 ```js
-const build_array = (array, value) => {
+let build_array = (array, value) => {
 	array.push(value)
 	return array
 }
@@ -227,18 +254,18 @@ You've now read a lot of words and nothing cool has happened at all. Hang in the
 All we must do from here is start from `build_array` and end up with a function that maps or filters (or both) *and* does `build_array`. Let's just call it `build` for now, because there's no need to limit ourselves to using an array as the accumulator, and only being able to build an array.
 
 ```js
-const map = f => build => (accumulator, value) => build(accumulator, f(value))
+map = f => build => (accumulator, value) => build(accumulator, f(value))
 
 const reducer = map (v => v + 1) (build_array)
 // TA-DA! This is a function we can pass to reduce that maps and builds the array!
 
 ;[ 1, 2, 3 ].reduce(reducer, [])
-// -> [ 2, 3, 4 ]
+// => [ 2, 3, 4 ]
 ```
 
 What about filter?
 ```js
-const filter = predicate => build => (accumulator, value) =>
+filter = predicate => build => (accumulator, value) =>
 	predicate(value)
 		? build(accumulator, value) // only build if the value passes the predicate
 		: accumulator // otherwise, just return the accumulator unchanged
@@ -256,7 +283,7 @@ const filter_even_then_build_array_reducer = filter_even_transducer(build_array)
 const map_add1_then_filter_even_then_build_array_reducer = map_add1_transducer(filter_even_then_build_array_reducer)
 
 ;[ 1, 2, 3 ].reduce(map_add1_then_filter_even_then_build_array_reducer, [])
-// -> [ 2, 4 ]
+// => [ 2, 4 ]
 ```
 
 The composed reducer recieved `[], 1`, the map reducer in it called the next reducer with `[], 2`.
@@ -291,21 +318,25 @@ You are now familiar with the fundamental transducer concept and basic implement
 ## Iterating keyed collections
 
 A detail to consider about iteration is how to approach keyed collections. Keyed collections are typically iterated as key/value pairs, `[ key, value ]`, but I currently believe this approach causes semantic problems and foregoes some powerful opportunities. Just on principle, having as the `value`, a `[ key, value ]`, suggests something is wrong. It warrants changing the name of each item from the collection to `entry`, but this is false for non-keyed collections, unless you make it so that all collections are iterated as key/value pairs, as in the following example:
+
+<!--js
+map = f => T.overPairs(T.map (f))
+-->
 ```js
 map (([ key, value ]) => [ key, value + 1 ]) ([ 1, 2, 3 ])
-// -> [ 2, 3, 4 ]
+// => [ 2, 3, 4 ]
 
 map (([ key, value ]) => [ key, value + 1 ]) ({ foo: 1, bar: 2, baz: 3 })
-// -> { foo: 2, bar: 3, baz: 4 }
+// => { foo: 2, bar: 3, baz: 4 }
 ```
 
 It's semantically consistent, but awful to use. We know that for non-keyed collections, we just want the value, not the value and index, passed as the value. I suggest applying the same thinking to keyed collections; just pass the value as the value.
 ```js
-map (value => value + 1) ([ 1, 2, 3 ])
-// -> [ 2, 3, 4 ]
+T.map (value => value + 1) ([ 1, 2, 3 ])
+// => [ 2, 3, 4 ]
 
-map (value => value + 1) ({ foo: 1, bar: 2, baz: 3 })
-// -> { foo: 2, bar: 3, baz: 4 }
+T.map (value => value + 1) ({ foo: 1, bar: 2, baz: 3 })
+// => { foo: 2, bar: 3, baz: 4 }
 ```
 
 For consistency, I suggest that all collections are iterated by passing out a value and a key, where the key can be an arbitrary incrementing index, should the collection not be keyed or indexed naturally. So, at the lowest level, there is some representation of key/value pairs being iterated and passed through the transducer algorithms.
@@ -314,24 +345,34 @@ See [`iterateNative`](../src/core/iterateNative.js).
 
 ```js
 // as pairs
-export const map = f => next => (accumulator, [ key, value ]) => next(accumulator, [ key, f(value) ])
+map = f => next => (accumulator, [ key, value ]) => next(accumulator, [ key, f(value) ])
 
 // key as an additional parameter
-export const map = f => next => (accumulator, value, key) => next(accumulator, f(value), key)
+map = f => next => (accumulator, value, key) => next(accumulator, f(value), key)
 ```
 
 When a keyed collection hands out its values as key/value pairs, the knowledge that the left value is a key is lost, meaning that generic operations cannot handle the pair any differently than any other value. By preserving this information with a consistent distinction between key and value, we gain more compositional opportunity.
+
 ```js
+filter = predicate => next => (accumulator, value, key) => predicate(value) ? next(accumulator, value, key) : accumulator
+map = f => next => (accumulator, value, key) => next(accumulator, f(value), key)
+let reduce = reducer => accumulator => array => array.reduce(reducer, accumulator)
+let build_object = (accumulator, value, key) => {
+	accumulator[key] = value
+	return accumulator
+}
+
 reduce
-	(filter
-		(v => v % 2 === 0)
-		(map
-			(v => v + 1)
-			(build_object))
+	(map
+		(v => v + 1)
+		(filter
+			(v => v % 2 === 0)
+			(build_object)
+		)
 	)
 	({})
 	([ 1, 2, 3 ])
-// -> { 0: 2, 2: 4 },
+	// => { 0: 2, 2: 4 }
 ```
 
 We didn't need to say anything about keys to go from an array to an object - the iteration function passed along the index as `key` in case anything could use it, and so the object builder took the array indexes as its keys, **and it naturally preserved the correct index from the array.**
@@ -339,20 +380,20 @@ We didn't need to say anything about keys to go from an array to an object - the
 This key value distinction also allows us to do something very expressive that is usually impossible: switch the values passed within an operation from values to keys, or as key/value pairs.
 
 ```js
-const f = T.compose (T.reject (v => v.startsWith('r')), T.map (T.reverse))
+;(() => {
+	const f = T.compose (T.reject (v => v.startsWith('r')), T.map (T.reverse))
 
-// run the operation normally - on the values of the input
-f ({ foo: 'jack', bar: 'ron', baz: 'sally' })
-// -> { foo: 'kcaj', baz: 'yllas' }
+	// run the operation normally - on the values of the input
+	f ({ foo: 'jack', bar: 'ron', baz: 'sally' })
+	// => { foo: 'kcaj', bar: 'nor', baz: 'yllas' }
 
-// run the operation on the keys
-T.overKeys (f) ({ foo: 'jack', bar: 'ron', baz: 'sally' })
-// -> { oof: 'jack', zab: 'sally' }
-```
+	// run the operation on the keys
+	T.overKeys (f) ({ foo: 'jack', bar: 'ron', baz: 'sally' })
+	// => { oof: 'jack', zab: 'sally' }
 
-```js
-T.overPairs (T.map(T.reverse)) ({ foo: 1, bar: 2, baz: 3 })
-// -> { 1: 'foo', 2: 'bar', 3, 'baz' }
+	T.overPairs (T.map(T.reverse)) ({ foo: 1, bar: 2, baz: 3 })
+	// => { 1: 'foo', 2: 'bar', 3: 'baz' }
+})()
 ```
 
 This is accomplished by putting a transducer on each side of the given transducer. The transducer before adjusts what is sent to next transducer, and the transducer after adjusts it back. It is very similar to a lens, and maybe it is correct to call it some kind of promapping. Promap is both contramap and map - transforming the input and the output.
@@ -366,9 +407,9 @@ Many algorithms only pertain to part of a collection and do not need any further
 Consider how you could implement `slice` from `reduce`.
 ```js
 ;[ 1, 2, 3, 4, 5 ].slice(1, 3)
-// -> [ 2, 3 ]
+// => [ 2, 3 ]
 
-const slice = startIndex => toIndex => array => array.reduce(
+let slice = startIndex => toIndex => array => array.reduce(
 	(acc, value, index) => {
 		if (index >= startIndex && index < toIndex) {
 			acc.push(value)
@@ -379,36 +420,48 @@ const slice = startIndex => toIndex => array => array.reduce(
 )
 
 slice (1) (3) ([ 1, 2, 3, 4, 5 ])
-// -> [ 2, 3 ]
+// => [ 2, 3 ]
 ```
 
 The output is correct, but the expression is not entirely accurate, and so is doing needless work. The values `4` and `5` are iterated and passed into the reducer, though the nature of the algorithm indicates that they are not needed. We can fix this by using a reduce that supports short circuiting. The common implementation is that a reducer can wrap its return value in a special object, and after each call to the reducer, `reduce` examines the return value to see if it is that special object. If so, iteration is stopped, the value is unwrapped from the object, and is returned.
 
 ```js
+const specialReducedIdentifier = '@@transducer/reduced'
+const isReduced = x => !!x && x[specialReducedIdentifier] === true
 const reduced = value => ({ [specialReducedIdentifier]: true, value })
+const unreduced = value => isReduced(value) ? value.value : value
+reduce = reducer => initialValue => array => {
+	let accumulator = initialValue
+	let i = 0
+	while (i < array.length && !isReduced(accumulator)) {
+		accumulator = reducer(accumulator, array[i], i)
+		++i
+	}
+	return unreduced(accumulator)
+}
 
-const slice = startIndex => toIndex => array => {
+slice = startIndex => toIndex => array => {
 	const finalIndex = toIndex - 1
-	return array.reduce(
-		(acc, value, index) => {
+	return reduce
+		((acc, value, index) => {
 			if (index >= startIndex) {
 				acc.push(value)
 			}
 			return index === finalIndex ? reduced(acc) : acc
-		},
-		[]
-	)
+		})
+		([])
+		(array)
 }
 
 slice (1) (3) ([ 1, 2, 3, 4, 5 ])
-// -> [ 2, 3 ]
+// => [ 2, 3 ]
 ```
 
 The result is the same, but iteration stops after `3`, so `4` and `5` are not be passed to the reducer.
 
 Finally, we should extract `slice` into a transducer.
 ```js
-const slice = startIndex => toIndex => next => {
+slice = startIndex => toIndex => next => {
 	const finalIndex = toIndex - 1
 	return (accumulator, value) =>
 		index >= startIndex
@@ -423,7 +476,7 @@ On the final value, `slice` calls the next step, which calls out to the builder,
 
 The transducer implementation so far is a function that takes a reducer and returns a reducer, and the reducer can call the next reducer and short circuit the reduction by returning its result wrapped in `reduced`. This interface is insufficient for many cases. What about a `reverse` transducer? `reduceRight` is not an option, because a transducer can't take on the responsibility or knowledge of iterating, nor is it possible to iterate many collections from the right. Iterating from the left, we can only produce a reversed result by collecting every value, and knowing we have collected every value, and then sending them on in the opposite order.
 ```js
-const reverse = array => {
+let reverse = array => {
 	const values = []
 	return array.reduce(
 		(acc, value, index) => {
@@ -438,14 +491,14 @@ const reverse = array => {
 }
 
 reverse([ 1, 2, 3 ])
-// -> [ 3, 2, 1 ]
+// => [ 3, 2, 1 ]
 ```
 
 That accomplished the goal within a reducer, but we certainly cheated by checking the input array to determine if we were on the last value. In hyper-generic transducer land, we can't examine the source collection, nor could we rely on it having a `length` if we could. You could offer the solution of adding some metadata and passing along { final: true } when it's the last value, and I'd dig that for other reasons, but it doesn't solve our current problem. Not all collections can know what their last value is at the time a value is iterated; they may send a value and then determine they have reached their end afterward. This means that the `reverse` algorithm could only reliably send its values *after* the iteration/reduction is complete.
 ```js
-const reverse = array => {
+reverse = array => {
 	const values = []
-	const acc = return array.reduce(
+	const acc = array.reduce(
 		(acc, value, index) => {
 			values.unshift(value)
 			return acc
@@ -457,12 +510,20 @@ const reverse = array => {
 }
 
 reverse([ 1, 2, 3 ])
-// -> [ 3, 2, 1 ]
+// => [ 3, 2, 1 ]
 ```
 
 There are two new concepts here - a transducer algorithm with an additional function, and that function running beyond the reduction. Let's first improve our transducer specification while making the `reverse` transducer.
 ```js
-export const reverse = next => {
+build_array = ({
+	step: (accumulator, value) => {
+		accumulator.push(value)
+		return accumulator
+	},
+	result: accumulator => accumulator
+})
+
+reverse = next => {
 	const values = []
 	return {
 		step: (accumulator, value, meta) => {
@@ -479,10 +540,12 @@ export const reverse = next => {
 	}
 }
 
-// NOTE: there is a serious problem here that has not yet been discussed. The following code is stateful and ought to be scoped within a function we have not yet discussed.
-const process = reverse(build_array)
-process.result([ 1, 2, 3 ].reduce(process.step, [])
-// -> [ 3, 2, 1 ]
+;(() => {
+	// NOTE: there is a serious problem here that has not yet been discussed. The following code is stateful and ought to be scoped within a function we have not yet discussed.
+	const process = reverse(build_array)
+	process.result([ 1, 2, 3 ].reduce(process.step, []))
+	// => [ 3, 2, 1 ]
+})()
 ```
 
 Our transducer is no longer simply taking a reducer and returning a reducer, but taking a value that includes a reducer and returning such a value. This value is `{ step, result }`, where `step` is the reducer, and `result` is the function that takes the `accumulator` after `reduce` has completed, and returns the final result. This value `{ step, result }` is known as a `transformer`. Where we have formerly spoken of a `reducer`, you should now think of a transformer with a reducer called the `step` function. We should now say that is a transducer is a function that takes the next transformer and returns a transformer.
@@ -491,10 +554,10 @@ The default `result` function for a transducer just takes the accumulator and pa
 
 The `result` function of `reverse` calls `next.step`, which is a valid and normal thing to do. The `result` function provides an opportunity for a transducer to flush any pending steps it knows about, should it desire to. In the case of `reverse`, it buffers everything and needs to flush its values in order to accomplish anything. It must be considerate of the `reduced` object and stop calling `next.step` if `reduced` is returned to it. Further, it must unwrap `reduced` and just send the plain result onto `next.result`. You might notice that what we've just described is the same specification required for our short-circuit-able `reduce`. Therefore, we can rewrite the `result` function for `reverse` using that `reduce` to update the accumulator, check for `reduced`, and ensure it is unwrapped.
 ```js
-export const reverse = next => {
+reverse = next => {
 	const values = []
 	return {
-		step: (accumulator, value, meta) => {
+		step: (accumulator, value) => {
 			values.unshift(value)
 			return accumulator
 		},
@@ -509,7 +572,7 @@ export const reverse = next => {
 ## stateful transducers
 
 The `reverse` transducer has another quality that differentiates it from `map` and `filter` - local state. When it receives `next`, it creates a local array `values`, which is populated across multiple steps, throughout the overall process. It is critical that this state is not leaked such that another process begins from existing state populated by another process. Remember that when transducers are composed, they are not invokved, but setup to be invoked in a series when the composed function is invoked. In other words, `compose(transducerA, transducerB)` just returns a function that is waiting on `next` to be passed in, just like the transducers being composed.
-```js
+```node
 // Composing doesn't invoke the transducers. Just sets them up to be invoked in series.
 const composition = next => transducerA(transducerB(next))
 
@@ -521,11 +584,11 @@ Once the builder is passed in, the local state in transducers is created, and so
 ```js
 const process = reverse(build_array)
 
-process.result(reduce(process.step, [], [ 1, 2, 3 ]))
-// -> [ 3, 2, 1 ]
+process.result(reduce (process.step) ([]) ([ 1, 2, 3 ]))
+// => [ 3, 2, 1 ]
 
-process.result(reduce(process.step, [], [ 4, 5, 6 ]))
-// -> [ 6, 5, 4, 3, 2, 1 ]
+process.result(reduce (process.step) ([]) ([ 1, 2, 3 ]))
+// => [ 3, 2, 1, 3, 2, 1 ]
 ```
 
 Reusing the transformer returned from invoking the transducer, `process`, caused the same expression to produce a different result, because both invocations shared the same state. A new `process` must be created for each reduction. The next section will implement a function for wrapping up this concern.
@@ -535,17 +598,17 @@ Reusing the transformer returned from invoking the transducer, `process`, caused
 Now that our algorithms have `{ step, result }` functions instead of just being the reducer `step`, we cannot run a transformation with only `reduce (reducer) (initialValue) (source)`. We should create a higher level function that calls `reduce` with the transformer's `step` function and then calls the transformer's `result` function with the result from `reduce`. We should also use this function to contain the stateful `process`. This function is called `transduce`, and it just a small layer over `reduce`.
 
 ```js
-const transduce = accumulator => builder => transducer => source => {
+let transduce = accumulator => builder => transducer => source => {
 	const process = transducer(builder)
-	const result = reduce (process.step) (accumulator) (source)
+	const result = T.reduce (process.step) (accumulator) (source)
 	return process.result(result)
 }
 
 transduce ([]) (build_array) (reverse) ([ 1, 2, 3 ])
-// -> [ 3, 2, 1 ]
+// => [ 3, 2, 1 ]
 
 transduce ([]) (build_array) (reverse) ([ 1, 2, 3 ])
-// -> [ 3, 2, 1 ]
+// => [ 3, 2, 1 ]
 ```
 
 Passing in the builder separately and having `transduce` pass it to the transducer keeps the stateful transformer reference contained, and we no longer need to remember to call `process.result` after reducing. We have to pass a builder that is compatible with the accumulator, so there's redundancy here. Given an collection, we could somehow determine what builder to use to build into, or given a builder, we could somehow get an empty collection to build into, and then use something higher level to wrap this up.
@@ -557,10 +620,35 @@ Some implementations of `transduce` will vary behavior by the number and/or type
 `into` is slightly more convenient than `transduce`, letting us just pass the accumulator, and finding and passing the apporpriate builder to `transduce` for us. For this to work, you need some kind of `getBuilder` function that takes a collection and returns a transformer that can take each value and build it into the accumulator. A way to do this is to have custom collections implement the transformer properties, so that given such a collection, its `step` and `result` functions could be used to build it, otherwise, if the collection is a primitive/known collection, have builders in the library for them and return the appropriate one for that collection.
 
 ```js
+
+// updating map to the latest specification
+map = f => next => ({
+	step: (accumulator, value) => next.step(accumulator, f(value)),
+	result: accumulator => accumulator
+})
+
+build_object = ({
+	step: build_object,
+	result: accumulator => accumulator
+})
+let build_set = ({
+	step: (accumulator, value) => {
+		accumulator.add(value)
+		return accumulator
+	},
+	result: accumulator => accumulator
+})
+
+const getBuilder = collection => Array.isArray(collection)
+	? build_array
+	: collection.constructor === Set
+		? build_set
+		: build_object
+
 const into = accumulator => transduce (accumulator) (getBuilder(accumulator))
 
 into ([]) (map (v => v + 1)) ([ 1, 2, 3 ])
-// -> [ 2, 3, 4 ]
+// => [ 2, 3, 4 ]
 ```
 
 `into` is the function I have seen used most often in the wild for running transducers. I don't make a habit of taking existing references and mutating them with values, so `into` is not of much interest to me. For the above case, I certainly do not prefer that api over the much simpler `map (v => v + 1) ([ 1, 2, 3 ])`. Let's keep exploring!
@@ -573,6 +661,26 @@ TODO: name this function and write this section, if this function should even ex
 TODO: either in this section or the next section on `transform` needs to include the following:
 So far, we have defined a transformer as `{ step, result }`, and a `builder` as a transformer that should be at the end, building values into the accumulator. There are situations where it is desirable to construct a new/empty collection from a builder, and a property for such a purpose is an intuitive feature for a builder. If by expanding the meaning of "builder", we also expand the meaning of "transformer", we will handle another case as well. Transformers will now have an additional property `init` that is a function that either returns the result of `next.init()`, or returns a new/empty collection to use as the accumulator. This means that, if given a builder directly, you can get a collection by calling `builder.init()`, or if given a transformer with a builder on the end, you can accomplish the same with `transformer.init()`, as all the transformers in the pipeline will just call out to the `next.init()` until reaching the builder, and then return its value, in the same way that `step` and `result` work.
 
+```js
+build_array = ({
+	init: () => [],
+	...build_array
+})
+build_set = ({
+	init: () => new Set(),
+	...build_set
+})
+build_object = ({
+	init: () => ({}),
+	...build_object
+})
+map = f => next => ({
+	init: next.init,
+	step: (accumulator, value) => next.step(accumulator, f(value)),
+	result: accumulator => accumulator
+})
+```
+
 ## `transform (transducer) (source)`
 
 _* This function is not found in other transducer implementations._
@@ -580,28 +688,44 @@ _* This function is not found in other transducer implementations._
 `transform` goes a small level higher than the former functions, taking neither an accumulator nor a builder. You may first think of it as meaning that both the builder and accumulator should be determined from the `source` collection; if you put in an array, you will get back an array. This further improves the API over former examples.
 
 ```js
-T.transform (T.map (v => v + 1)) ([ 1, 2, 3 ])
-// -> [ 2, 3, 4 ]
+let transform = transducer => source => {
+	const builder = getBuilder(source)
+	const accumulator = builder.init()
+	return transduce (accumulator) (builder) (transducer) (source)
+}
+
+transform (map (v => v + 1)) ([ 1, 2, 3 ])
+// => [ 2, 3, 4 ]
 ```
 
 There is an additional case which I suggest handling here as well. We have formerly discussed the rule that a transducer must not be invoked directly, out in the code where the stateful transformer reference can be leaked. Given that passing a builder means invoking a transducer, this means there is a limitation that we could not create a composition of a transducer and a specific builder directly. Consider `compose(Object.fromEntries, map (([ key, value ]) => [ value, key ]))`, which is mapping the collection of key/value pairs, and then creating an object from those pairs. It is desirable that we could express something like `compose(builder, transducer)`. A way this can be done is to make a builder into a transducer, which is as simple as `() => builder`.
 
 ```js
 // builders don't use `next`, so just ignore it... no need for any arguments
-const Array_from = () => Array_builder
+const Array_from = () => build_array
 
 // always building into an array
-compose(Array_from, T.map (v => v + 1))
+compose(Array_from, map (v => v + 1))
 ```
 
 This can be problematic because when executing this composition, the accumulator must match the builder that is composed here. If the accumulator is chosen according to the type of the source collection, then this composition is only going to work when the source collection is of the same type as the builder in it. This is a case where I would attempt to get a collection from the transducer, which means it has a builder in it, and otherwise get a builder and accumulator from the source collection, and so this is what `transform` does.
 
 ```js
-T.transform (compose(Array_from, T.map(v => v + 1))) (new Set([ 1, 2, 3 ]))
-// -> [ 2, 3, 4 ]
+// TODO: this could be cleaner
+transform = transducer => source => {
+	const accumulator = transducer({ init: () => false }).init()
+	if (accumulator) {
+		return transduce (accumulator) () (transducer) (source)
+	}
+	const builder = getBuilder(source)
+	return transduce (builder.init()) (builder) (transducer) (source)
+}
 
-T.transform (T.map(v => v + 1)) (new Set([ 1, 2, 3 ]))
-// -> Set { 2, 3, 4 }
+transform (compose(map (v => v + 1), Array_from)) (new Set([ 1, 2, 3 ]))
+// => [ 2, 3, 4 ]
+
+transform (map (v => v + 1)) (new Set([ 1, 2, 3 ]))
+// => new Set([ 2, 3, 4 ])
 ```
 
 This is almost tolerable, as we've eliminated having to specify the two extra values that came along with using transducers - the accumulator and the builder, and we can still go from any collection, through as many transformations as we want, and to any collection all in one pass. But, I can't abide having to call `transform` all over the place, so we're not done here.
@@ -617,7 +741,7 @@ next => {
 	return {
 		'@@transducer/init': () => next['@@transducer/init'](),
 		'@@transducer/step': (accumulator, value) => next['@@transducer/step'](accumulator, value),
-		'@@transducer/result': accumulator => next['@@transducer/result')(accumulator)
+		'@@transducer/result': accumulator => next['@@transducer/result'](accumulator)
 	}
 }
 ```
@@ -626,7 +750,8 @@ The above is more verbose than necessary. If the transducer doesn't need to do a
 
 This is pretty awful to type and to look at, so, unless abandoning this whole approach in favor of a better one, an option to ease the pain a little bit is to put the property names on an object and use that.
 ```js
-import { tProtocol } from './'
+const { tProtocol } = T
+
 next => ({
 	[tProtocol.init]: () => next[tProtocol.init](),
 	[tProtocol.step]: (accumulator, value) => next[tProtocol.step](accumulator, value),
@@ -644,7 +769,7 @@ With regular, non-transducer functions, this composition returns a function whic
 filters the collection down to even numbers,
 then maps the collection by adding one to each value.
 ```js
-compose (map (add(1)), filter (isEvenNumber))
+compose (map (v => v + 1), filter (v => v % 2 === 0))
 ```
 
 But if the values passed to `compose` are transducers, the composition may verbally appear the same, but its meaning is very different.
@@ -656,8 +781,8 @@ I'll break that down:
 ```js
 compose
 	(
-		map (add(1)), // next => (accumulator, value) => next(accumulator, f(value))
-		filter (isEvenNumber), // next => (accumulator, value) => predicate(value) ? next(accumulator, value) : accumulator
+		map (v => v + 1), // next => (accumulator, value) => next(accumulator, f(value))
+		filter (v => v % 2 === 0), // next => (accumulator, value) => predicate(value) ? next(accumulator, value) : accumulator
 	)
 	(build_array)
 
@@ -676,16 +801,18 @@ I like that transducers are generic and reusable. I like that I can freely move 
 We can wrap transducers in a helper that gives them this behavior for us.
 
 ```js
+let isTransformer = value => [ 'init', 'step', 'result' ].every(prop => typeof value[prop] === 'function')
+
 // takes a transducer and returns a transducer that can auto-transduce when passed a collection instead of a transformer
 const Transducer = transducerF => next => isTransformer(next) ? transducerF (next) : transform (transducerF) (next)
 
-const map = f => Transducer(next => ({
+map = f => Transducer(next => ({
 	...next,
-	[tProtocol.step]: (accumulator, value) => next[tProtocol.step](accumulator, value)
-})
+	step: (accumulator, value) => next.step(accumulator, f(value))
+}))
 
 map (v => v + 1) ([ 1, 2, 3 ])
-// -> [ 2, 3, 4 ]
+// => [ 2, 3, 4 ]
 ```
 
 Did we just fly directly into the sun with our wings in tact? Unfortunately, no. On the one hand, it worked like a regular function, but on the other hand, it worked like a regular function. Consider this:
@@ -706,10 +833,10 @@ With this special `compose`, we can finally use the same API we would use for no
 
 ```js
 T.compose(T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ])
-// -> [ 2, 4 ]
+// => [ 2, 4 ]
 
 T.compose(T.Object.from, T.map (v => v + 1), T.filter (v => v % 2 !== 0)) ([ 1, 2, 3 ])
-// -> { 0: 2, 2: 4 },
+// => { 0: 2, 2: 4 }
 ```
 
 _Note: we have now ventured far away from other transducer implementations, and will go a little further yet._
@@ -718,7 +845,7 @@ _Note: we have now ventured far away from other transducer implementations, and 
 
 As you have seen, by examining whether a value is a transducer or a transformer in some situations we can do some cool stuff. There is no common approach to identifying whether a function is a transducer. I simply added the property `{ '@@transducer': true }` to my transducer functions, using the aforementioned helper `Transducer`, that also provides auto-transducing. Speaking of auto-transducing, that is where the awkwardness comes about that I had mentioned regarding collections implementing the transformer properties.
 
-```js
+```node
 const Transducer = transducerF => next => isTransformer(next) ? transducerF (next) : transform (transducerF) (next)
 ```
 
@@ -728,16 +855,16 @@ The helper makes the transducer check whether `next` is a transformer, and if so
 
 Writing transducers can include some boilerplate that is not specific to the algorithm being implemented. A helper can be used to fill in the missing stuff. `map` can be as verbose as this:
 ```js
-const map = f => next => {
+map = f => next => ({
 	[tProtocol.init]: next[tProtocol.init],
 	[tProtocol.step]: (accumulator, value) => next[tProtocol.step](accumulator, f(value)),
 	[tProtocol.result]: next[tProtocol.result]
-}
+})
 ```
 
 Or as concise as:
 ```js
-const map = f => Transducer(next => (accumulator, value) => next[tProtocol.step](accumulator, f(value)))
+map = f => Transducer(next => (accumulator, value) => next[tProtocol.step](accumulator, f(value)))
 ```
 
 This helper lets you express the transformer as just a step function, or as an object that doesn't need to define all of the transformer properties.
@@ -746,22 +873,22 @@ See [`Transformer`](../src/core/Trasformer.js).
 
 Some transducers can be derived from others. `map` is a tiny layer over the lowest level `step` function, and `scan` is a tiny layer over `map`. It can be nice to ignore the full transducer requirements and express small pieces of transducers as their own thing, and reuse those pieces, rather than having to deal with a transducer/transformer as the smallest composable piece.
 ```js
-export const map_step = f => next => (accumulator, value, meta) => next(accumulator, f(value), meta)
+const map_step = f => next => (accumulator, value, meta) => next(accumulator, f(value), meta)
 
-export const map = f => Transducer(next => map_step (f) (next[tProtocol.step]))
+map = f => Transducer(next => map_step (f) (next[tProtocol.step]))
 
 // reusing `map_step`
-export const scan_step = reducer => initialValue => next => {
+const scan_step = reducer => initialValue => next => {
 	let accumulator = initialValue
 	return map_step (value => accumulator = reducer(accumulator, value)) (next)
 }
 
-export const scan = reducer => initialValue => Transducer(next => scan_step (reducer) (initialValue) (next[tProtocol.step]))
+const scan = reducer => initialValue => Transducer(next => scan_step (reducer) (initialValue) (next[tProtocol.step]))
 ```
 
 Finally, there are higher level algorithms that can be built just from stringing others together. The most obvious example of all obvious examples ever:
 ```js
-const flatMap = compose (flatten, map)
+const flatMap = T.compose (T.flatten, T.map)
 ```
 
 Just note that, at least for the implementation in this library, the special `compose` should be used because it will make the composition identifiable as a transducer, and keep the smart auto-transduce stuff in tact.
@@ -778,17 +905,17 @@ I am convinced it is possible to build a high level API over transducers that ma
 As for generic `reduce`, there are only two possible cases. `reduce` may iterate through a collection synchronously, returning the result, or it may iterate through the collection asynchronously (i.e. a value later, and another even later, etc), eventually producing the result, if it ever reaches the end. To handle this generically, you just have to handle the case that you get a promise and the case that you don't. Anything that calls `reduce` should keep this in mind... the main thing that does this is `transduce`. It just needs to call the result function after the `reduce` promise resolves, in the case that `reduce` returns a promise.
 
 This is how it looked before:
-```js
-const transduce = accumulator => builder => transducer => source => {
+```node
+transduce = accumulator => builder => transducer => source => {
 	const process = transducer(builder)
-	const result = reduce (process.step) (accumulator) (source)
+	const result = T.reduce (process.step) (accumulator) (source)
 	return process.result(result)
 }
 ```
 
 And now supporting `reduce` that may return a promise:
 ```js
-const transduce = accumulator => builder => transducer => source => {
+transduce = accumulator => builder => transducer => source => {
 	const process = transducer(builder)
 	const result = reduce (process[tProtocol.step]) (accumulator) (source)
 	const resultF = result => process[tProtocol.result](result, accumulator)
@@ -799,39 +926,49 @@ const transduce = accumulator => builder => transducer => source => {
 This makes it so that we can transduce an Emitter or some other asynchronous collection into a synchronous collection like this:
 
 ```js
-// this Emitter.of makes an emitter that emits the given values on the next tick
-// after the values are emitted, the emitter 'completes', so its `reduce` promise resolves
-await T.transduce ([]) (T.Array_builder) (T.map (v => v + 1)) (Emitter.of(1, 2, 3))
-// -> [ 2, 3, 4 ]
+;(async () => {
+	// This Emitter.of makes an emitter that emits the given values on the next tick.
+	// After the values are emitted, the emitter 'completes', so its `reduce` promise resolves.
+	await T.transduce ([]) (T.builders.Array) (T.map (v => v + 1)) (Emitter.of(1, 2, 3))
+	// => [ 2, 3, 4 ]
 
-// higher level API:
-await T.compose (Array.from, T.map (v => v + 1)) (Emitter.of(1, 2, 3))
-// -> [ 2, 3, 4 ]
+	// higher level API:
+	await T.compose (T.Array.from, T.map (v => v + 1)) (Emitter.of(1, 2, 3))
+	// => [ 2, 3, 4 ]
+})()
 ```
 
 You could also transduce an asynchronous collection into an asynchronous collection, but there's a problem. An asynchronous collection is like many promises / many promise resolutions, and turning that into a single promise is bad news. Consider this:
-```js
-const emitterOfNumber = Emitter.of(1, 2, 3)
-const promiseOfEmitterOfDoubledNumber = T.map (v => v + 1) (emitterOfNumber)
-// uhhh. promise of an emitter?
+```node
+;(() => {
+	const emitterOfNumber = Emitter.of(1, 2, 3)
+	const promiseOfEmitterOfDoubledNumber = map (v => v * 2) (emitterOfNumber)
+	// uhhh. promise of an emitter?
+	console.log(promiseOfEmitterOfDoubledNumber)
 
-promiseOfEmitterOfDoubledNumber.then(emitter => {
-	emitter.subscribe(console.log) // nothing, ever
-})
+	promiseOfEmitterOfDoubledNumber.then(emitter => {
+		emitter.subscribe(console.log) // nothing, ever
+	})
+})()
 ```
 
 When the source emitter emits, the value from it is going to be mapped and sent to the builder, building that value into the new emitter, and, of course, this keeps hapenning for all the values emitted by the source emitter, until it completes. When the source emitter is done, _then_ the promise from `reduce` resolves, leading to the promise of `transduce` resolving, and so we finally get the result - the emitter that was built. But... that emitter already got all of its values and emitted them, while we just had a promise. We missed everything! Asynchronous collections are able to convey each value built into them. They are like a promise that can resolve more than once. Therefore, returning a promise of their complete reduction defeats their purpose. Collections like this *are* the promise of each step of their reduction, so to speak. This adds a third and final branch of behavior for `transduce`. If the accumulator being built up can represent async steps, just return the accumulator immediately, otherwise, return the result as usual, whether it's a promise or synchronous result. In any of the cases, the result function of the process will still be called after the reduction completes. See [`transduce`](../src/core/transduce.js).
 ```js
-const emitterOfNumber = Emitter.of(1, 2, 3)
-const emitterOfDoubledNumber = T.map (v => v + 1) (emitterOfNumber)
-emitterOfDoubledNumber.subscribe(console.log) // logs 2, logs 4, logs 6
+;(() => {
+	const emitterOfNumber = Emitter.of(1, 2, 3)
+	const emitterOfDoubledNumber = T.map (v => v * 2) (emitterOfNumber)
+	emitterOfDoubledNumber.subscribe(value => {
+		value // => expected.shift()
+	})
+	const expected = [ 2, 4, 6 ]
+})()
 ```
 
 ### **Caveats
 I am very happy with the results of these decisions so far, but there are some trade-offs.
 
 If `transduce` might return the accumulator that was handed to it, then step functions / builders and result functions should be extremely cautious about switching out the original accumulator for a different one, as this will have limitations. Imagine the case of transducing into an emitter, so that emitter is returned synchronously, but when the first value comes from the source, the `step` function decides the process is done and returns `reduced(0)`, instead of `reduced(thatAccumulatorEmitter)`. It is intending to send a `0` out into the world as the result of this process, but we've already sent out an emitter. I can't think of any real cases where this is a problem, though I have [seen such a transducer](https://github.com/cognitect-labs/transducers-js/blob/master/src/com/cognitect/transducers.js):
-```js
+```node
 transducers.first = transducers.wrap(function(result, input) {
 	return transducers.reduced(input);
 });
@@ -841,9 +978,15 @@ There are plenty of other ways to express this behavior without having a transdu
 
 ```js
 const first = T.compose(v => v[0], T.Array.from, T.slice (0) (1))
+first ('abc') // => 'a'
 ```
 
-
 ## TODO: asynchronous transducers
+
+We have discussed generic reduction that can be synchronous or asynchronous and a complementary transduce function. The final major complexity to explore for this system is the possibility of transducers that are themselves asynchronous. Let's go back to some barebones code to get to the heart of the situation.
+
+```js
+
+```
 
 ## TODO: generic iteration, generic reduce, custom reduce

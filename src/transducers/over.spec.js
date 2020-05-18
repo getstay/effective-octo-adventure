@@ -4,10 +4,11 @@ import * as T from '../index.js'
 test('over', t => {
 	t.test('overKeys', t => {
 		t.deepEqual(
-			T.transform (T.overKeys (T.map(v => v.split('').reverse().join('')))) ({ foo: 1, bar: 2, baz: 3 }),
+			T.transform (T.overKeys (T.map(v => console.log({ v }) || v.split('').reverse().join('')))) ({ foo: 1, bar: 2, baz: 3 }),
 			{ oof: 1, rab: 2, zab: 3 }
 		)
 	})
+	return
 	t.test('overPairs', t => {
 		t.deepEqual(
 			T.transform (T.overPairs (T.map (([ k, v ]) => [ v, Number(k) + v ]))) ({ 0: 1, 1: 2, 2: 3 }),
@@ -22,7 +23,12 @@ test('over', t => {
 			'overKeys(map(f))'
 		)
 		t.deepEqual(
-			//T.overKeys (T.compose (T.reject (v => v.startsWith('r')), T.map(v => v.split('').reverse().join('')))) ({ foo: 1, bar: 2, baz: 3 }),
+			T.overKeys
+				(T.compose (T.reject (key => key.startsWith('r')), T.map(T.reverse)))
+				({ foo: 1, bar: 2, baz: 3 }),
+			{ oof: 1, zab: 3 }
+		)
+		t.deepEqual(
 			T.overKeys (T.compose (T.reject (v => v.startsWith('r')), T.map(T.reverse))) ({ foo: 1, bar: 2, baz: 3 }),
 			{ oof: 1, zab: 3 },
 			'overKeys(compose(reject(f), map(f)))'
